@@ -43,7 +43,7 @@ pub async fn announce_started() -> u64 {
         let mut t = m.lock().await;
         announce(&mut t, Some(Event::Started)).await;
         wait_time = wait_time.min(t.interval);
-        info!("Time: {}", wait_time);
+        debug!("Time: {}", wait_time);
     }
     wait_time
 }
@@ -401,7 +401,7 @@ pub async fn build_url(
     //         .get_appropriate_unit(byte_unit::UnitType::Decimal)
     //         .to_string()
     // );
-    info!("\tAnnonce at: {}", url);
+    info!("\tAnnounce at: {}", url);
     result
 }
 

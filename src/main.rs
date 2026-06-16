@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use fake_torrent_client::Client;
 use std::path::PathBuf;
 use tokio::sync::{Mutex, OnceCell, RwLock};
@@ -52,7 +50,7 @@ fn parse_cli_args() -> Option<PathBuf> {
             }
             // Handle other arguments or positional arguments here
             other_arg => {
-                tracing::error!("Warning: Unknown argument: {}, Ignoring", other_arg);
+                warn!("Unknown argument: {}, ignoring", other_arg);
             }
         }
     }
