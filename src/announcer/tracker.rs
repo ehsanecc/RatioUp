@@ -108,6 +108,13 @@ pub fn is_supported_url(url_str: &str) -> bool {
         return false;
     }
 
+    // UDP has no standard default port; a missing port will cause the announce to
+    // silently connect to the wrong destination, so reject early.
+    if scheme == "udp" && parsed_url.port().is_none() {
+        warn!("UDP tracker URL has no explicit port, rejecting: {url_str}");
+        return false;
+    }
+
     match host {
         Host::Domain(domain_str) => {
             // For ".local", a simple split is sufficient, as ".local" is not a "public" TLD managed by the public
@@ -437,5 +444,13 @@ mod tests {
 
         // Unsupported schemes
         assert!(!is_supported_url("wss://tracker.example.com/announce"));
+
+        // UDP without explicit port — silently using port 80 would connect to the wrong host
+        assert!(!is_supported_url("udp://tracker.example.com/announce"));
+        assert!(!is_supported_url("udp://192.168.1.1/announce"));
+
+        // Malformed / unparsable
+        assert!(!is_supported_url("not-a-url"));
+        assert!(!is_supported_url(""));
     }
 }

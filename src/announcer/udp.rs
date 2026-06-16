@@ -241,7 +241,7 @@ async fn resolve_tracker_addr(url: &str) -> Result<SocketAddr, TrackerError> {
     }
 
     let host = parsed.host_str().ok_or(TrackerError::ParseError)?;
-    let port = parsed.port().unwrap_or(80);
+    let port = parsed.port().ok_or(TrackerError::ParseError)?;
 
     // Resolve hostname to IP address using tokio's DNS resolution
     let addr_str = format!("{}:{}", host, port);
@@ -397,11 +397,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_tracker_addr_no_port() {
-        // Default port should be 80
+        // UDP has no standard default port — a missing port must be an error,
+        // not a silent fallback that would connect to the wrong destination.
         let result = resolve_tracker_addr("udp://localhost/announce").await;
-        assert!(result.is_ok());
-        let addr = result.unwrap();
-        assert_eq!(addr.port(), 80);
+        assert!(matches!(result, Err(TrackerError::ParseError)));
     }
 
     #[test]
