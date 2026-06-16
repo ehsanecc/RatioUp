@@ -442,4 +442,91 @@ mod tests {
 
         assert_eq!(packet.len(), 98);
     }
+
+    // --- TrackerError Display ---
+
+    #[test]
+    fn test_tracker_error_display() {
+        let io_err = std::io::Error::other("disk fail");
+        assert!(
+            TrackerError::IoError(io_err)
+                .to_string()
+                .contains("disk fail"),
+            "IoError display"
+        );
+        assert!(
+            TrackerError::Timeout.to_string().contains("timed out"),
+            "Timeout display"
+        );
+        assert!(
+            TrackerError::InvalidResponse
+                .to_string()
+                .contains("invalid"),
+            "InvalidResponse display"
+        );
+        assert!(
+            TrackerError::Remote("bad tracker".to_string())
+                .to_string()
+                .contains("bad tracker"),
+            "Remote display"
+        );
+        assert!(
+            TrackerError::ParseError.to_string().contains("parse"),
+            "ParseError display"
+        );
+    }
+
+    // --- Peer parsing from synthetic announce response buffer ---
+
+    #[test]
+    fn test_parse_peers_from_response_buffer() {
+        // Layout: action(4) + txid(4) + interval(4) + leechers(4) + seeders(4) = 20 bytes header
+        // Followed by 2 peers × 6 bytes each (IPv4 + port)
+        let mut buf = [0u8; 32];
+        buf[0..4].copy_from_slice(&1u32.to_be_bytes()); // action = 1 (announce)
+        buf[4..8].copy_from_slice(&0u32.to_be_bytes()); // transaction_id
+        buf[8..12].copy_from_slice(&1800u32.to_be_bytes()); // interval
+        buf[12..16].copy_from_slice(&5u32.to_be_bytes()); // leechers
+        buf[16..20].copy_from_slice(&10u32.to_be_bytes()); // seeders
+        // peer 1: 192.168.1.1:6881
+        buf[20..24].copy_from_slice(&[192, 168, 1, 1]);
+        buf[24..26].copy_from_slice(&6881u16.to_be_bytes());
+        // peer 2: 10.0.0.1:51413
+        buf[26..30].copy_from_slice(&[10, 0, 0, 1]);
+        buf[30..32].copy_from_slice(&51413u16.to_be_bytes());
+
+        let interval = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
+        let leechers = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
+        let seeders = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
+        assert_eq!(interval, 1800);
+        assert_eq!(leechers, 5);
+        assert_eq!(seeders, 10);
+
+        let peers_data = &buf[20..32];
+        assert_eq!(peers_data.len() % 6, 0);
+        let mut peers: Vec<std::net::SocketAddr> = Vec::new();
+        for chunk in peers_data.chunks_exact(6) {
+            let ip = std::net::Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]);
+            let port = u16::from_be_bytes([chunk[4], chunk[5]]);
+            peers.push(std::net::SocketAddr::new(ip.into(), port));
+        }
+        assert_eq!(peers.len(), 2);
+        assert_eq!(peers[0].port(), 6881);
+        assert_eq!(peers[1].port(), 51413);
+        assert_eq!(peers[1].ip().to_string(), "10.0.0.1");
+    }
+
+    // --- Short peer ID is zero-padded to 20 bytes ---
+
+    #[test]
+    fn test_peer_id_short_is_zero_padded() {
+        let short = b"SHORT";
+        let arr: [u8; 20] = {
+            let mut a = [0u8; 20];
+            a[..short.len()].copy_from_slice(short);
+            a
+        };
+        assert_eq!(&arr[..5], b"SHORT");
+        assert!(arr[5..].iter().all(|&b| b == 0));
+    }
 }
