@@ -145,7 +145,7 @@ pub async fn announce(torrent: &mut Torrent, event: Option<Event>) {
             }
         }
         info!(
-            "Anounced: interval={}, event={:?}, downloaded=0, uploaded={}, seeders={}, leechers={}, torrent={}",
+            "Announced: interval={}, event={:?}, downloaded=0, uploaded={}, seeders={}, leechers={}, torrent={}",
             torrent.interval,
             event,
             torrent.uploaded,
@@ -156,12 +156,12 @@ pub async fn announce(torrent: &mut Torrent, event: Option<Event>) {
     }
 }
 
-// /// Check which torrents need to be announced and call the announce fuction when applicable
+// /// Check which torrents need to be announced and call the announce function when applicable
 // pub fn check_and_announce() {
 //     let list = TORRENTS.read().expect("Cannot get torrent list");
 //     for m in list.iter() {
 //         let mut t = m.lock().unwrap();
-//         if t.shound_announce() {
+//         if t.should_announce() {
 //             announce(&mut t, None);
 //         }
 //     }
@@ -228,10 +228,7 @@ async fn announce_http(
         .build()
         .expect("Failed to build reqwest client");
 
-    let (url_template, headers_to_set) = client.get_query();
-    let mut full_url = String::from(url);
-    full_url.push(if full_url.contains('?') { '&' } else { '?' });
-    full_url.push_str(&url_template);
+    let (_, headers_to_set) = client.get_query();
     let built_url = build_url(url, torrent, event, client.key.clone().to_string()).await;
     info!("Announce HTTP URL {built_url}");
 
@@ -352,7 +349,7 @@ async fn announce_http(
 }
 
 /// Build the HTTP announce URLs for the listed trackers in the torrent file.
-/// It prepares the annonce query by replacing variables (port, numwant, ...) with the computed values
+/// It prepares the announce query by replacing variables (port, numwant, ...) with the computed values
 pub async fn build_url(
     url: &str,
     torrent: &mut Torrent,

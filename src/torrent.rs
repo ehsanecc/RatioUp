@@ -65,7 +65,7 @@ pub struct Torrent {
     /// Last announce to the tracker
     pub last_announce: std::time::Instant,
     pub info_hash: [u8; 20],
-    /// URL encoded hash thet is used to build the tracker query
+    /// URL encoded hash that is used to build the tracker query
     pub info_hash_urlencoded: String,
     /// Number of seeders, it is used on the web UI
     pub seeders: u16,
@@ -73,7 +73,7 @@ pub struct Torrent {
     pub leechers: u16,
     /// It is the next upload speed that will be announced. It is also used for UI display.
     pub next_upload_speed: u32,
-    /// Current interval after the last annouce
+    /// Current interval after the last announce
     pub interval: u64,
     pub error_count: u16,
     // pub creation_date: Option<DateTime<Local>>,
@@ -173,15 +173,13 @@ impl Torrent {
         result.push_str(", \"next_upload_speed\": ");
         result.push_str(&self.next_upload_speed.to_string());
         result.push_str(", \"urls\": [");
-        let count = self.urls.len();
         for (index, url) in self.urls.iter().enumerate() {
-            result.push_str(&format!("\"{url}\""));
-            if (index + 1) < count {
+            if index > 0 {
                 result.push_str(", ");
-            } else {
-                result.push_str("]}\n");
             }
+            result.push_str(&format!("\"{url}\""));
         }
+        result.push_str("]}\n");
         // TODO: add info hash?
         result
     }
