@@ -1,10 +1,7 @@
-use std::time::Duration;
-
 use crate::bencode::{BencodeDecoder, BencodeValue};
 use crate::torrent::Torrent;
 use crate::{CLIENT, CONFIG, TORRENTS};
 use fake_torrent_client::Client;
-use reqwest::Client as ReqwestClient;
 use tracing::{debug, error, info, warn};
 use url::{Host, Url};
 
@@ -222,11 +219,9 @@ async fn announce_http(
     //     peer_id = percent_encoding::percent_encode(&params.peer_id, URL_ENCODE_RESERVED),
     // );
 
-    let reqwest_client = ReqwestClient::builder()
-        .user_agent(&client.user_agent)
-        .timeout(Duration::from_secs(60)) // Timeout pour la connexion et la lecture
-        .build()
-        .expect("Failed to build reqwest client");
+    let reqwest_client = crate::HTTP_CLIENT
+        .get()
+        .expect("HTTP client not initialized");
 
     let (_, headers_to_set) = client.get_query();
     let built_url = build_url(url, torrent, event, client.key.clone().to_string()).await;

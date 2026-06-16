@@ -10,13 +10,21 @@ pub fn writable(path: &str) -> bool {
         return false;
     }
     let p = Path::new(path);
-    let parent = p.parent().unwrap();
+    let Some(parent) = p.parent() else {
+        error!("Output path has no parent directory");
+        return false;
+    };
     if !parent.is_dir() {
         error!("Directory {:?} does not exist", parent.to_str());
         return false;
     }
-    let md = fs::metadata(parent).unwrap();
-    !md.permissions().readonly()
+    match fs::metadata(parent) {
+        Ok(md) => !md.permissions().readonly(),
+        Err(e) => {
+            error!("Cannot read directory metadata: {e}");
+            false
+        }
+    }
 }
 
 /// Write a session file with torrent and its stats

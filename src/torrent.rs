@@ -12,17 +12,18 @@ use crate::utils::{get_sha1, percent_encoding};
 #[derive(Debug)]
 pub enum TorrentError {
     BencodeError(BencodeDecoderError),
+    IoError(std::io::Error),
     MissingField(&'static str),
     InvalidFieldType(&'static str),
     ParseError(String), // For general parsing issues (e.g., string to u64)
     Utf8ConversionError(&'static str),
 }
 
-// Implement the Display trait for TorrentError
 impl fmt::Display for TorrentError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             TorrentError::BencodeError(e) => write!(f, "Bencode decoding error: {:?}", e),
+            TorrentError::IoError(e) => write!(f, "IO error: {}", e),
             TorrentError::MissingField(field) => write!(f, "Missing required field: {}", field),
             TorrentError::InvalidFieldType(field) => write!(f, "Invalid type for field: {}", field),
             TorrentError::ParseError(msg) => write!(f, "Parsing error: {}", msg),
@@ -32,6 +33,8 @@ impl fmt::Display for TorrentError {
         }
     }
 }
+
+impl std::error::Error for TorrentError {}
 
 // Convert BencodeDecoderError to TorrentError
 impl From<BencodeDecoderError> for TorrentError {
@@ -150,7 +153,7 @@ impl Torrent {
     // }
 
     pub fn from_file(path: PathBuf) -> Result<Self, TorrentError> {
-        let data = std::fs::read(&path).expect("Cannot read torrent file");
+        let data = std::fs::read(&path).map_err(TorrentError::IoError)?;
         let mut torrent = Self::from_bencode_bytes(&data)?;
         torrent.source_path = Some(path);
         Ok(torrent)

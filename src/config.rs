@@ -175,8 +175,18 @@ pub async fn init_client(config: &Config) -> Option<u16> {
         client.name, client.key, client.peer_id
     );
     let key_interval = client.key_refresh_every;
+    let user_agent = client.user_agent.clone();
     let mut guard = crate::CLIENT.write().await;
     *guard = Some(client);
+    drop(guard);
+
+    let reqwest_client = reqwest::Client::builder()
+        .user_agent(user_agent)
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .expect("Failed to build HTTP client");
+    let _ = crate::HTTP_CLIENT.set(reqwest_client);
+
     key_interval
 }
 
