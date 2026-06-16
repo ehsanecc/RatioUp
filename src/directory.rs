@@ -51,3 +51,62 @@ pub async fn load_torrents(directory: PathBuf) -> usize {
     info!("{} torrent(s) loaded", count);
     count
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Return the path to a real .torrent fixture bundled with the test suite.
+    fn ubuntu_fixture() -> &'static str {
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/ubuntu-20.04.4-desktop-amd64.iso.torrent"
+        )
+    }
+
+    #[tokio::test]
+    async fn test_load_torrents_counts_valid_files() {
+        crate::TORRENTS.clear();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::copy(ubuntu_fixture(), dir.path().join("ubuntu.torrent")).unwrap();
+
+        let count = load_torrents(dir.path().to_path_buf()).await;
+        assert_eq!(count, 1);
+        crate::TORRENTS.clear();
+    }
+
+    #[tokio::test]
+    async fn test_load_torrents_skips_non_torrent_files() {
+        crate::TORRENTS.clear();
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join("README.txt"), b"not a torrent")
+            .await
+            .unwrap();
+
+        let count = load_torrents(dir.path().to_path_buf()).await;
+        assert_eq!(count, 0);
+        crate::TORRENTS.clear();
+    }
+
+    #[tokio::test]
+    async fn test_load_torrents_skips_duplicates() {
+        crate::TORRENTS.clear();
+        let dir = tempfile::tempdir().unwrap();
+        // Two copies of the same torrent → same info hash → only one inserted
+        std::fs::copy(ubuntu_fixture(), dir.path().join("ubuntu1.torrent")).unwrap();
+        std::fs::copy(ubuntu_fixture(), dir.path().join("ubuntu2.torrent")).unwrap();
+
+        let count = load_torrents(dir.path().to_path_buf()).await;
+        assert_eq!(count, 1);
+        crate::TORRENTS.clear();
+    }
+
+    #[tokio::test]
+    async fn test_load_torrents_empty_directory() {
+        crate::TORRENTS.clear();
+        let dir = tempfile::tempdir().unwrap();
+        let count = load_torrents(dir.path().to_path_buf()).await;
+        assert_eq!(count, 0);
+        crate::TORRENTS.clear();
+    }
+}
