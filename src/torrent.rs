@@ -175,7 +175,9 @@ impl Torrent {
         result.push_str(&self.leechers.to_string());
         result.push_str(", \"next_upload_speed\": ");
         result.push_str(&self.next_upload_speed.to_string());
-        result.push_str(", \"urls\": [");
+        result.push_str(", \"info_hash\": \"");
+        result.push_str(&crate::utils::hex_encode(&self.info_hash));
+        result.push_str("\", \"urls\": [");
         for (index, url) in self.urls.iter().enumerate() {
             if index > 0 {
                 result.push_str(", ");
@@ -183,7 +185,6 @@ impl Torrent {
             result.push_str(&format!("\"{url}\""));
         }
         result.push_str("]}\n");
-        // TODO: add info hash?
         result
     }
 
@@ -397,6 +398,106 @@ mod tests {
         t.seeders = 4;
         t.leechers = 8;
         assert!(t.can_upload());
+    }
+
+    fn make_torrent(info_hash: [u8; 20], urls: Vec<String>) -> Torrent {
+        Torrent {
+            name: String::from("Test torrent"),
+            length: 262144,
+            private: false,
+            uploaded: 512,
+            last_announce: std::time::Instant::now(),
+            info_hash,
+            info_hash_urlencoded: String::new(),
+            seeders: 3,
+            leechers: 7,
+            next_upload_speed: 1024,
+            interval: 1800,
+            urls,
+            error_count: 0,
+            encoding: None,
+            min_interval: None,
+            tracker_id: None,
+            source_path: None,
+        }
+    }
+
+    #[test]
+    fn test_to_json_info_hash_all_zeros() {
+        let t = make_torrent(
+            [0u8; 20],
+            vec![String::from("http://tracker.example.com/announce")],
+        );
+        let json = t.to_json();
+        assert!(
+            json.contains("\"info_hash\": \"0000000000000000000000000000000000000000\""),
+            "unexpected json: {json}"
+        );
+    }
+
+    #[test]
+    fn test_to_json_info_hash_known_value() {
+        let hash = [
+            0xb5, 0x07, 0xc6, 0x96, 0x4f, 0xfa, 0x3f, 0xaa, 0xaa, 0x1a, 0xa3, 0xac, 0x2d, 0x42,
+            0x2d, 0x39, 0xa9, 0xc9, 0xe2, 0x46,
+        ];
+        let t = make_torrent(
+            hash,
+            vec![String::from("http://tracker.example.com/announce")],
+        );
+        let json = t.to_json();
+        assert!(
+            json.contains("\"info_hash\": \"b507c6964ffa3faaaa1aa3ac2d422d39a9c9e246\""),
+            "unexpected json: {json}"
+        );
+    }
+
+    #[test]
+    fn test_to_json_contains_all_scalar_fields() {
+        let t = make_torrent(
+            [0u8; 20],
+            vec![String::from("http://tracker.example.com/announce")],
+        );
+        let json = t.to_json();
+        assert!(json.contains("\"name\": \"Test torrent\""), "{json}");
+        assert!(json.contains("\"length\": 262144"), "{json}");
+        assert!(json.contains("\"private\": false"), "{json}");
+        assert!(json.contains("\"uploaded\": 512"), "{json}");
+        assert!(json.contains("\"seeders\": 3"), "{json}");
+        assert!(json.contains("\"leechers\": 7"), "{json}");
+        assert!(json.contains("\"next_upload_speed\": 1024"), "{json}");
+    }
+
+    #[test]
+    fn test_to_json_multiple_urls() {
+        let urls = vec![
+            String::from("http://tracker1.example.com/announce"),
+            String::from("udp://tracker2.example.com:6969"),
+        ];
+        let t = make_torrent([0u8; 20], urls);
+        let json = t.to_json();
+        assert!(
+            json.contains("\"http://tracker1.example.com/announce\""),
+            "{json}"
+        );
+        assert!(
+            json.contains("\"udp://tracker2.example.com:6969\""),
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn test_to_json_name_with_quotes() {
+        let mut t = make_torrent(
+            [0u8; 20],
+            vec![String::from("http://t.example.com/announce")],
+        );
+        t.name = String::from("My \"Quoted\" Torrent");
+        let json = t.to_json();
+        assert!(
+            json.contains(r#""name": "My \"Quoted\" Torrent""#),
+            "{json}"
+        );
     }
 
     #[test]

@@ -54,6 +54,10 @@ pub fn get_sha1(input: &[u8]) -> [u8; 20] {
     m.digest().bytes()
 }
 
+pub fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,4 +147,21 @@ mod tests {
     }
 
     // [181, 7, 198, 150, 79, 250, 63, 170, 170, 26, 163, 172, 45, 66, 45, 57, 169, 201, 226, 70] => should be b507c6964ffa3faaaa1aa3ac2d422d39a9c9e246
+
+    #[test]
+    fn test_hex_encode() {
+        assert_eq!(
+            hex_encode(&[
+                0xb5, 0x07, 0xc6, 0x96, 0x4f, 0xfa, 0x3f, 0xaa, 0xaa, 0x1a, 0xa3, 0xac, 0x2d, 0x42,
+                0x2d, 0x39, 0xa9, 0xc9, 0xe2, 0x46
+            ]),
+            "b507c6964ffa3faaaa1aa3ac2d422d39a9c9e246"
+        );
+        assert_eq!(
+            hex_encode(&[0u8; 20]),
+            "0000000000000000000000000000000000000000"
+        );
+        assert_eq!(hex_encode(&[0xff; 4]), "ffffffff");
+        assert_eq!(hex_encode(&[]), "");
+    }
 }
