@@ -3,7 +3,7 @@
 # * Search Tool: NixOS Package Search
 # * Usage: If you find ripgrep, simply add pkgs.ripgrep to the buildInputs in your flake.nix.
 {
-  description = "Rust Template with automatic pre-commit hooks";
+  description = "RatioUp — lightweight torrent ratio faker";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -17,6 +17,28 @@
     flake-utils,
     rust-overlay,
   }:
+    # System-agnostic outputs come first.
+    {
+      # Raw module — does not set a default package; callers must set
+      # services.ratioup.package themselves.
+      nixosModules.ratioup = import ./nixos/modules/ratioup.nix;
+
+      # Convenience wrapper that pre-fills services.ratioup.package from
+      # this flake's build output, keyed on the target system.
+      nixosModules.default =
+        { pkgs, lib, ... }:
+        {
+          imports = [ self.nixosModules.ratioup ];
+          services.ratioup.package = lib.mkDefault
+            self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        };
+
+      # Overlay that adds ratioup to a pkgs set.
+      overlays.default = final: _prev: {
+        ratioup = self.packages.${final.system}.default;
+      };
+    }
+    //
     flake-utils.lib.eachDefaultSystem (system: let
       overlays = [(import rust-overlay)];
       pkgs = import nixpkgs {inherit system overlays;};
@@ -65,6 +87,16 @@
 
       # `nix run .#codium` — VSCodium with all extensions pre-installed
       packages.codium = custom-codium;
+
+      # `nix build .#checks.x86_64-linux.nixos-test` — run the NixOS VM test.
+      # Only available on x86_64-linux (NixOS tests require a Linux host).
+      checks = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+        nixos-test = import ./nixos/tests/ratioup.nix {
+          inherit pkgs;
+          nixosModule = self.nixosModules.ratioup;
+          ratioUpPackage = self.packages.${system}.default;
+        };
+      };
 
       devShells.default = pkgs.mkShell {
         buildInputs = with pkgs; [
