@@ -39,7 +39,7 @@ pub enum TrackerError {
     IoError(std::io::Error),
     Timeout,
     InvalidResponse,
-    TrackerError(String),
+    Remote(String),
     ParseError,
 }
 
@@ -49,7 +49,7 @@ impl std::fmt::Display for TrackerError {
             TrackerError::IoError(e) => write!(f, "IO error: {}", e),
             TrackerError::Timeout => write!(f, "connection timed out"),
             TrackerError::InvalidResponse => write!(f, "invalid response from tracker"),
-            TrackerError::TrackerError(msg) => write!(f, "tracker error: {}", msg),
+            TrackerError::Remote(msg) => write!(f, "tracker error: {}", msg),
             TrackerError::ParseError => write!(f, "failed to parse tracker URL"),
         }
     }
@@ -142,7 +142,7 @@ impl UdpTracker {
 
         let transaction_id = self.generate_transaction_id();
 
-        // Construire le paquet d'annonce
+        // Construire le paquet d'announce
         let mut announce_packet = Vec::with_capacity(98);
         announce_packet.extend_from_slice(&connection_id.to_be_bytes());
         announce_packet.extend_from_slice(&ANNOUNCE_ACTION.to_be_bytes());
@@ -185,7 +185,7 @@ impl UdpTracker {
                 // Vérifier si c'est une erreur
                 if action == 3 {
                     let error_msg = String::from_utf8_lossy(&buffer[8..bytes_received]);
-                    return Err(TrackerError::TrackerError(error_msg.to_string()));
+                    return Err(TrackerError::Remote(error_msg.to_string()));
                 }
 
                 if action != ANNOUNCE_ACTION || received_transaction_id != transaction_id {
@@ -256,7 +256,7 @@ async fn resolve_tracker_addr(url: &str) -> Result<SocketAddr, TrackerError> {
         .find(|addr| addr.is_ipv4())
         .or_else(|| addrs.first())
         .copied()
-        .ok_or_else(|| TrackerError::TrackerError(format!("Could not resolve hostname: {}", host)))
+        .ok_or_else(|| TrackerError::Remote(format!("Could not resolve hostname: {}", host)))
 }
 
 pub async fn announce_udp(url: &str, torrent: &mut Torrent, client: &Client, event: Option<Event>) {
