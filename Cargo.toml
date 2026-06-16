@@ -33,3 +33,6 @@ sha1_smol = "1.0"
 notify = "8.0"
 
 dashmap = "6.2.1"
+
+[dev-dependencies]
+tempfile = "3"

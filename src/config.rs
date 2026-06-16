@@ -192,7 +192,9 @@ pub async fn init_client(config: &Config) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::Config;
+    use std::path::PathBuf;
+
+    use super::Config;
 
     #[test]
     fn test_speed_ok() {
@@ -206,5 +208,109 @@ mod tests {
         cfg.min_upload_rate = 8192;
         cfg.max_upload_rate = 4096;
         assert!(!cfg.speeds_ok());
+    }
+
+    // --- load_from_file ---
+
+    #[tokio::test]
+    async fn test_load_from_file_valid_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        tokio::fs::write(
+            &path,
+            b"port = 51413\nmin_upload_rate = 8192\nmax_upload_rate = 1048576\n",
+        )
+        .await
+        .unwrap();
+        let cfg = Config::load_from_file(&path).await;
+        assert_eq!(cfg.port, 51413);
+        assert_eq!(cfg.min_upload_rate, 8192);
+        assert_eq!(cfg.max_upload_rate, 1_048_576);
+    }
+
+    #[tokio::test]
+    async fn test_load_from_file_missing_file() {
+        let cfg = Config::load_from_file(&PathBuf::from("/nonexistent/ratioup_config.toml")).await;
+        assert!(cfg.speeds_ok());
+    }
+
+    #[tokio::test]
+    async fn test_load_from_file_invalid_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        tokio::fs::write(&path, b"this is ::: not valid toml !!!")
+            .await
+            .unwrap();
+        let cfg = Config::load_from_file(&path).await;
+        assert!(cfg.speeds_ok());
+    }
+
+    #[tokio::test]
+    async fn test_load_from_file_swapped_rates_are_corrected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        tokio::fs::write(
+            &path,
+            b"min_upload_rate = 2097152\nmax_upload_rate = 8192\n",
+        )
+        .await
+        .unwrap();
+        let cfg = Config::load_from_file(&path).await;
+        assert!(cfg.min_upload_rate <= cfg.max_upload_rate);
+    }
+
+    #[tokio::test]
+    async fn test_load_from_file_invalid_port_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        tokio::fs::write(&path, b"port = 0\n").await.unwrap();
+        let cfg = Config::load_from_file(&path).await;
+        assert_ne!(cfg.port, 0);
+    }
+
+    #[tokio::test]
+    async fn test_load_from_file_numwant() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        tokio::fs::write(&path, b"numwant = 50\n").await.unwrap();
+        let cfg = Config::load_from_file(&path).await;
+        assert_eq!(cfg.numwant, Some(50));
+    }
+
+    #[tokio::test]
+    async fn test_load_from_file_use_pid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        tokio::fs::write(&path, b"use_pid_file = true\n")
+            .await
+            .unwrap();
+        let cfg = Config::load_from_file(&path).await;
+        assert!(cfg.use_pid_file);
+    }
+
+    #[tokio::test]
+    async fn test_load_from_file_torrent_dir_and_output_stats() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        tokio::fs::write(
+            &path,
+            b"torrent_dir = \"/tmp/torrents\"\noutput_stats = \"/tmp/stats.json\"\n",
+        )
+        .await
+        .unwrap();
+        let cfg = Config::load_from_file(&path).await;
+        assert_eq!(cfg.torrent_dir, PathBuf::from("/tmp/torrents"));
+        assert_eq!(cfg.output_stats, Some(PathBuf::from("/tmp/stats.json")));
+    }
+
+    #[tokio::test]
+    async fn test_load_from_file_client_string() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        tokio::fs::write(&path, b"client = \"qBittorrent_4_60\"\n")
+            .await
+            .unwrap();
+        let cfg = Config::load_from_file(&path).await;
+        assert_eq!(cfg.client, "qBittorrent_4_60");
     }
 }
