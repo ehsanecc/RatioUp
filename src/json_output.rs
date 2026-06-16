@@ -82,6 +82,7 @@ pub async fn write() {
 #[cfg(test)]
 mod tests {
     use crate::json_output::writable;
+
     #[test]
     fn test_writable() {
         assert!(writable("/dev/null"));
@@ -100,5 +101,16 @@ mod tests {
 
         // case when folder does not exists
         assert!(!writable("/aze/rty/uio/pqs/ratioup.json"));
+    }
+
+    #[test]
+    fn test_writable_trailing_slash_is_rejected() {
+        // A path ending with '/' is a directory reference, not a file — always false.
+        assert!(!writable("/tmp/"));
+    }
+
+    #[test]
+    fn test_writable_nonexistent_parent_is_rejected() {
+        assert!(!writable("/nonexistent_dir_xyz/output.json"));
     }
 }
