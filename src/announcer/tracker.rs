@@ -178,6 +178,68 @@ pub async fn announce(torrent: &mut Torrent, event: Option<Event>) {
 //     }
 // }
 
+/// Parsed fields from a tracker HTTP response (BEP 3).
+#[derive(Debug, Default)]
+struct TrackerHttpUpdate {
+    failure_reason: Option<String>,
+    warning_message: Option<String>,
+    interval: Option<u64>,
+    min_interval: Option<u64>,
+    tracker_id: Option<String>,
+    seeders: Option<u16>,
+    leechers: Option<u16>,
+}
+
+/// Decode a bencoded tracker HTTP response into a `TrackerHttpUpdate`.
+/// Returns `Err` when the bytes cannot be decoded or are not a dictionary.
+fn parse_http_response(bytes: &[u8]) -> Result<TrackerHttpUpdate, String> {
+    let mut decoder = BencodeDecoder::new(bytes);
+    match decoder.decode() {
+        Ok(BencodeValue::Dictionary(dict)) => {
+            let mut update = TrackerHttpUpdate::default();
+
+            if let Some(BencodeValue::ByteString(msg)) = dict.get(b"failure reason".as_ref()) {
+                update.failure_reason = Some(
+                    std::str::from_utf8(msg)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|_| format!("{msg:?}")),
+                );
+                return Ok(update);
+            }
+
+            if let Some(BencodeValue::ByteString(msg)) = dict.get(b"warning message".as_ref()) {
+                update.warning_message = std::str::from_utf8(msg).ok().map(|s| s.to_string());
+            }
+
+            if let Some(BencodeValue::Integer(interval)) = dict.get(b"interval".as_ref()) {
+                update.interval = Some(*interval as u64);
+            }
+
+            if let Some(BencodeValue::Integer(mi)) = dict.get(b"min interval".as_ref()) {
+                update.min_interval = Some(*mi as u64);
+            }
+
+            if let Some(BencodeValue::ByteString(tid)) = dict.get(b"tracker_id".as_ref()) {
+                if let Ok(s) = std::str::from_utf8(tid) {
+                    update.tracker_id = Some(s.to_string());
+                }
+            }
+
+            if let Some(BencodeValue::Integer(value)) = dict.get(b"complete".as_ref()) {
+                update.seeders = Some(*value as u16);
+            }
+
+            if let Some(BencodeValue::Integer(value)) = dict.get(b"incomplete".as_ref()) {
+                update.leechers = Some(*value as u16);
+            }
+
+            Ok(update)
+        }
+        Ok(_) => Err("response is not a dictionary".to_string()),
+        Err(e) => Err(format!("{e:?}")),
+    }
+}
+
 async fn announce_http(
     url: &str,
     torrent: &mut Torrent,
@@ -266,82 +328,37 @@ async fn announce_http(
             };
             let bytes_vec = bytes.to_vec(); //convert Bytes to Vec<u8>
 
-            // we start to check if the tracker has returned an error message, if yes, we will reannounce later
+            // Bencode decoding
             debug!(
                 "Tracker response: {:?}",
                 String::from_utf8_lossy(&bytes_vec)
             );
-
-            // Bencode decoding
-            let mut decoder = BencodeDecoder::new(&bytes_vec);
-            match decoder.decode() {
-                Ok(bv) => {
-                    match bv {
-                        BencodeValue::Dictionary(dict) => {
-                            if let Some(BencodeValue::ByteString(msg)) =
-                                dict.get(b"failure reason".as_ref())
-                            {
-                                // If present, then no other keys may be present. The value is a human-readable error message as to why the request failed
-                                error!("Cannot announce: {:?}", std::str::from_utf8(msg));
-                                torrent.error_count += 1;
-                            } else {
-                                // Check for warning message (response still gets processed normally)
-                                if let Some(BencodeValue::ByteString(msg)) =
-                                    dict.get(b"warning message".as_ref())
-                                {
-                                    warn!("Announce with warning: {:?}", std::str::from_utf8(msg));
-                                }
-
-                                // Process response fields
-                                // Interval in seconds that the client should wait between sending regular requests to the tracker
-                                if let Some(BencodeValue::Integer(interval)) =
-                                    dict.get(b"interval".as_ref())
-                                {
-                                    torrent.interval = *interval as u64;
-                                }
-
-                                // (optional) Minimum announce interval. If present clients must not reannounce more frequently than this.
-                                if let Some(BencodeValue::Integer(mi)) =
-                                    dict.get(b"min interval".as_ref())
-                                {
-                                    torrent.min_interval = Some(*mi as u64);
-                                }
-
-                                // A string that the client should send back on its next announcements. If absent and
-                                // a previous announce sent a tracker id, do not discard the old value; keep using it.
-                                if let Some(BencodeValue::ByteString(tid)) =
-                                    dict.get(b"tracker_id".as_ref())
-                                {
-                                    match std::str::from_utf8(tid) {
-                                        Ok(tracker_id) => {
-                                            torrent.tracker_id = Some(tracker_id.to_string())
-                                        }
-                                        Err(e) => error!("Unable to decode tracker_id: {:?}", e),
-                                    }
-                                }
-
-                                // number of peers with the entire file, i.e. seeders (integer)
-                                if let Some(BencodeValue::Integer(value)) =
-                                    dict.get(b"complete".as_ref())
-                                {
-                                    torrent.seeders = *value as u16;
-                                }
-
-                                // number of leechers (integer)
-                                if let Some(BencodeValue::Integer(value)) =
-                                    dict.get(b"incomplete".as_ref())
-                                {
-                                    torrent.leechers = *value as u16;
-                                }
-
-                                // b"peers" not handled
-
-                                // Reset last_announce and error_count on successful response
-                                torrent.last_announce = std::time::Instant::now();
-                                torrent.error_count = 0;
-                            }
+            match parse_http_response(&bytes_vec) {
+                Ok(update) => {
+                    if let Some(reason) = update.failure_reason {
+                        error!("Cannot announce: {:?}", reason);
+                        torrent.error_count += 1;
+                    } else {
+                        if let Some(msg) = update.warning_message {
+                            warn!("Announce with warning: {:?}", msg);
                         }
-                        _ => error!("Response is not a dictionary"),
+                        if let Some(interval) = update.interval {
+                            torrent.interval = interval;
+                        }
+                        if let Some(mi) = update.min_interval {
+                            torrent.min_interval = Some(mi);
+                        }
+                        if let Some(tracker_id) = update.tracker_id {
+                            torrent.tracker_id = Some(tracker_id);
+                        }
+                        if let Some(seeders) = update.seeders {
+                            torrent.seeders = seeders;
+                        }
+                        if let Some(leechers) = update.leechers {
+                            torrent.leechers = leechers;
+                        }
+                        torrent.last_announce = std::time::Instant::now();
+                        torrent.error_count = 0;
                     }
                 }
                 Err(e) => error!("Bad response with HTTP status {status}: {:?}", e),
@@ -420,6 +437,38 @@ pub fn build_url(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::torrent::Torrent;
+
+    fn make_torrent() -> Torrent {
+        Torrent {
+            name: String::from("test"),
+            urls: vec![String::from("http://tracker.example.com/announce")],
+            length: 1024,
+            private: false,
+            uploaded: 0,
+            last_announce: std::time::Instant::now(),
+            info_hash: [0u8; 20],
+            info_hash_urlencoded: String::new(),
+            seeders: 0,
+            leechers: 0,
+            next_upload_speed: 1024,
+            interval: 1800,
+            error_count: 0,
+            encoding: None,
+            min_interval: None,
+            tracker_id: None,
+            source_path: None,
+        }
+    }
+
+    fn make_client() -> fake_torrent_client::Client {
+        use std::str::FromStr;
+        let mut client = fake_torrent_client::Client::default();
+        client.build(
+            fake_torrent_client::clients::ClientVersion::from_str("Transmission_3_00").unwrap(),
+        );
+        client
+    }
 
     #[test]
     pub fn test_supported_url() {
@@ -452,5 +501,145 @@ mod tests {
         // Malformed / unparsable
         assert!(!is_supported_url("not-a-url"));
         assert!(!is_supported_url(""));
+    }
+
+    // --- parse_http_response ---
+
+    #[test]
+    fn test_parse_http_response_normal() {
+        // interval=1800, min interval=900, complete=10, incomplete=5
+        let bytes = b"d8:completei10e10:incompletei5e8:intervali1800e12:min intervali900ee";
+        let update = parse_http_response(bytes).unwrap();
+        assert_eq!(update.interval, Some(1800));
+        assert_eq!(update.min_interval, Some(900));
+        assert_eq!(update.seeders, Some(10));
+        assert_eq!(update.leechers, Some(5));
+        assert!(update.failure_reason.is_none());
+        assert!(update.warning_message.is_none());
+    }
+
+    #[test]
+    fn test_parse_http_response_failure_reason() {
+        let bytes = b"d14:failure reason12:invalid hashe";
+        let update = parse_http_response(bytes).unwrap();
+        assert_eq!(update.failure_reason.as_deref(), Some("invalid hash"));
+        // All other fields must remain None (early return on failure reason)
+        assert!(update.interval.is_none());
+    }
+
+    #[test]
+    fn test_parse_http_response_warning_message() {
+        let bytes = b"d8:intervali1800e15:warning message9:slow downe";
+        let update = parse_http_response(bytes).unwrap();
+        assert!(update.warning_message.is_some());
+        assert!(update.failure_reason.is_none());
+        assert_eq!(update.interval, Some(1800));
+    }
+
+    #[test]
+    fn test_parse_http_response_tracker_id() {
+        let bytes = b"d8:intervali1800e10:tracker id6:abc123e";
+        let update = parse_http_response(bytes).unwrap();
+        assert_eq!(update.interval, Some(1800));
+        // tracker_id key is "tracker_id" (underscore), not "tracker id" (space)
+        assert!(update.tracker_id.is_none());
+    }
+
+    #[test]
+    fn test_parse_http_response_non_dict() {
+        let result = parse_http_response(b"i42e");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_http_response_invalid_bencode() {
+        let result = parse_http_response(b"not bencode");
+        assert!(result.is_err());
+    }
+
+    // --- build_url ---
+
+    #[test]
+    fn test_build_url_separator_without_query() {
+        let client = make_client();
+        let mut torrent = make_torrent();
+        let url = build_url(
+            "http://tracker.example.com/announce",
+            &mut torrent,
+            None,
+            &client,
+        );
+        assert!(
+            url.starts_with("http://tracker.example.com/announce?"),
+            "expected '?' separator, got: {url}"
+        );
+    }
+
+    #[test]
+    fn test_build_url_separator_with_existing_query() {
+        let client = make_client();
+        let mut torrent = make_torrent();
+        let url = build_url(
+            "http://tracker.example.com/announce?passkey=secret",
+            &mut torrent,
+            None,
+            &client,
+        );
+        assert!(
+            url.starts_with("http://tracker.example.com/announce?passkey=secret&"),
+            "expected '&' separator, got: {url}"
+        );
+    }
+
+    #[test]
+    fn test_build_url_started_event_uploaded_zero() {
+        // For Event::Started, elapsed is forced to 0, so uploaded = speed * 0 = 0
+        let client = make_client();
+        let mut torrent = make_torrent();
+        let url = build_url(
+            "http://tracker.example.com/announce",
+            &mut torrent,
+            Some(Event::Started),
+            &client,
+        );
+        assert!(
+            url.contains("event=started"),
+            "expected event=started in: {url}"
+        );
+        assert!(
+            url.contains("uploaded=0"),
+            "started event must report uploaded=0 in: {url}"
+        );
+    }
+
+    #[test]
+    fn test_build_url_stopped_event() {
+        let client = make_client();
+        let mut torrent = make_torrent();
+        let url = build_url(
+            "http://tracker.example.com/announce",
+            &mut torrent,
+            Some(Event::Stopped),
+            &client,
+        );
+        assert!(
+            url.contains("event=stopped"),
+            "expected event=stopped in: {url}"
+        );
+    }
+
+    #[test]
+    fn test_build_url_no_placeholders_remain() {
+        // After all replacements, no {…} tokens should remain
+        let client = make_client();
+        let mut torrent = make_torrent();
+        let url = build_url(
+            "http://tracker.example.com/announce",
+            &mut torrent,
+            Some(Event::Started),
+            &client,
+        );
+        assert!(!url.contains('{'), "unreplaced placeholder in: {url}");
+        assert!(!url.contains('}'), "unreplaced placeholder in: {url}");
     }
 }
