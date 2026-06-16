@@ -31,3 +31,5 @@ sha1_smol = "1.0"
 
 # file watching
 notify = "8.0"
+
+dashmap = "6.2.1"

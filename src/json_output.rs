@@ -53,17 +53,21 @@ pub async fn write() {
         data.push_str(",\"torrents\":[\n");
         let mut total_uploaded: u64 = 0;
         {
-            let torrents = TORRENTS.read().await;
+            let keys: Vec<[u8; 20]> = TORRENTS.iter().map(|e| *e.key()).collect();
             let mut first = true;
-            for m in torrents.iter() {
-                if first {
-                    first = false;
-                } else {
-                    data.push(',');
+            for key in keys {
+                if let Some(entry) = TORRENTS.get(&key) {
+                    let arc = std::sync::Arc::clone(entry.value());
+                    drop(entry);
+                    if first {
+                        first = false;
+                    } else {
+                        data.push(',');
+                    }
+                    let t = arc.lock().await;
+                    total_uploaded += t.uploaded;
+                    data.push_str(&t.to_json());
                 }
-                let t = m.lock().await;
-                total_uploaded += t.uploaded;
-                data.push_str(&t.to_json());
             }
         }
         data.push_str("\n],\"total_uploaded\":");

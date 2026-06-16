@@ -1,5 +1,7 @@
+use dashmap::DashMap;
 use fake_torrent_client::Client;
 use std::path::PathBuf;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::{Mutex, OnceCell, RwLock};
 use tokio::time::Duration;
 use tracing::{self, error, info, warn};
@@ -22,7 +24,7 @@ static STARTED: OnceCell<chrono::DateTime<chrono::Utc>> = OnceCell::const_new();
 static CONFIG: OnceCell<Config> = OnceCell::const_new();
 static CLIENT: RwLock<Option<Client>> = RwLock::const_new(None);
 static HTTP_CLIENT: OnceCell<reqwest::Client> = OnceCell::const_new();
-static TORRENTS: RwLock<Vec<Mutex<Torrent>>> = RwLock::const_new(Vec::new()); // TODO: replace with mutex
+static TORRENTS: LazyLock<DashMap<[u8; 20], Arc<Mutex<Torrent>>>> = LazyLock::new(DashMap::new);
 
 async fn run_key_renewer(refresh_every: u16) {
     loop {

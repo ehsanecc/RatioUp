@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::TORRENTS;
@@ -21,18 +22,20 @@ pub async fn run(wait_time: u64) {
     info!("Starting scheduler");
     loop {
         let next_interval = {
-            let list = TORRENTS.read().await;
-            // Compute minimum time until next announce across all torrents
+            let keys: Vec<[u8; 20]> = TORRENTS.iter().map(|e| *e.key()).collect();
             let mut min_interval = u64::MAX;
-            for m in list.iter() {
-                let mut t = m.lock().await;
-                if t.should_announce() {
-                    super::tracker::announce(&mut t, None).await;
+            for key in keys {
+                if let Some(entry) = TORRENTS.get(&key) {
+                    let arc = Arc::clone(entry.value());
+                    drop(entry);
+                    let mut t = arc.lock().await;
+                    if t.should_announce() {
+                        super::tracker::announce(&mut t, None).await;
+                    }
+                    let elapsed = t.last_announce.elapsed().as_secs();
+                    let time_until_announce = t.interval.saturating_sub(elapsed);
+                    min_interval = u64::min(min_interval, time_until_announce);
                 }
-                // Always update min_interval based on time until next announce
-                let elapsed = t.last_announce.elapsed().as_secs();
-                let time_until_announce = t.interval.saturating_sub(elapsed);
-                min_interval = u64::min(min_interval, time_until_announce);
             }
             // Ensure we don't sleep forever if no torrents or all have 0 interval
             if min_interval == u64::MAX || min_interval == 0 {
@@ -58,7 +61,7 @@ pub async fn run(wait_time: u64) {
 //         let mut next_announce = 4_294_967_295u32;
 //         // send queries to trackers
 //         for t in list {
-//             // TODO: client.annouce(t, client);
+//             // TODO: client.announce(t, client);
 //             let mut interval: u64 = 4_294_967_295;
 //             if !t.should_announce() {
 //                 next_announce = next_announce.min(t.interval.try_into().unwrap());

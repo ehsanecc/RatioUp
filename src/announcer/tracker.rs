@@ -2,6 +2,7 @@ use crate::bencode::{BencodeDecoder, BencodeValue};
 use crate::torrent::Torrent;
 use crate::{CLIENT, CONFIG, TORRENTS};
 use fake_torrent_client::Client;
+use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use url::{Host, Url};
 
@@ -37,39 +38,45 @@ pub enum Event {
 
 pub async fn announce_started() -> u64 {
     info!("Announcing torrent(s) with STARTED event");
-    let list = TORRENTS.read().await;
+    let keys: Vec<[u8; 20]> = TORRENTS.iter().map(|e| *e.key()).collect();
     let mut wait_time = u64::MAX;
-    for m in list.iter() {
-        let mut t = m.lock().await;
-        announce(&mut t, Some(Event::Started)).await;
-        wait_time = wait_time.min(t.interval);
-        debug!("Time: {}", wait_time);
+    for key in keys {
+        if let Some(entry) = TORRENTS.get(&key) {
+            let arc = Arc::clone(entry.value());
+            drop(entry);
+            let mut t = arc.lock().await;
+            announce(&mut t, Some(Event::Started)).await;
+            wait_time = wait_time.min(t.interval);
+            debug!("Time: {}", wait_time);
+        }
     }
     wait_time
 }
 
 pub async fn announce_stopped() {
     info!("Announcing torrent(s) with STOPPED event");
-    let list = TORRENTS.read().await;
+    let keys: Vec<[u8; 20]> = TORRENTS.iter().map(|e| *e.key()).collect();
     let mut total_uploaded: u64 = 0;
-
-    for m in list.iter() {
-        let mut t = m.lock().await;
-        announce(&mut t, Some(Event::Stopped)).await;
-        total_uploaded += t.uploaded;
-        info!(
-            "Torrent \"{}\": uploaded={}, seeders={}, leechers={}, errors={}",
-            t.name,
-            crate::utils::format_bytes_u64(t.uploaded),
-            t.seeders,
-            t.leechers,
-            t.error_count
-        );
+    for key in keys {
+        if let Some(entry) = TORRENTS.get(&key) {
+            let arc = Arc::clone(entry.value());
+            drop(entry);
+            let mut t = arc.lock().await;
+            announce(&mut t, Some(Event::Stopped)).await;
+            total_uploaded += t.uploaded;
+            info!(
+                "Torrent \"{}\": uploaded={}, seeders={}, leechers={}, errors={}",
+                t.name,
+                crate::utils::format_bytes_u64(t.uploaded),
+                t.seeders,
+                t.leechers,
+                t.error_count
+            );
+        }
     }
-
     info!(
         "Session total: {} torrents, uploaded={}",
-        list.len(),
+        TORRENTS.len(),
         crate::utils::format_bytes_u64(total_uploaded)
     );
 }

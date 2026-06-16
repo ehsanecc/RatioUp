@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -106,7 +106,6 @@ pub async fn watch_directory(directory: PathBuf) {
 async fn handle_file_added(path: PathBuf) {
     info!("New torrent file detected: {}", path.display());
 
-    // Parse the torrent file
     let torrent = match Torrent::from_file(path.clone()) {
         Ok(t) => t,
         Err(e) => {
@@ -115,7 +114,6 @@ async fn handle_file_added(path: PathBuf) {
         }
     };
 
-    // Check if torrent has URLs
     if torrent.urls.is_empty() {
         warn!(
             "Skipping torrent {} because there is no URL (DHT or not supported URLs)",
@@ -124,109 +122,72 @@ async fn handle_file_added(path: PathBuf) {
         return;
     }
 
-    // Check for duplicates
-    {
-        let list = TORRENTS.read().await;
-        for m in list.iter() {
-            let t = m.lock().await;
-            if t.info_hash_urlencoded == torrent.info_hash_urlencoded {
-                warn!("Torrent with same hash already exists: {}", torrent.name);
-                return;
-            }
-        }
+    let info_hash = torrent.info_hash;
+    if TORRENTS.contains_key(&info_hash) {
+        warn!("Torrent with same hash already exists: {}", torrent.name);
+        return;
     }
 
     let name = torrent.name.clone();
-    let info_hash = torrent.info_hash_urlencoded.clone();
+    let arc = Arc::new(Mutex::new(torrent));
+    TORRENTS.insert(info_hash, Arc::clone(&arc));
 
-    // Add to the list
-    {
-        let mut list = TORRENTS.write().await;
-        list.push(Mutex::new(torrent));
-    }
-
-    // Announce with STARTED event
     if CLIENT.read().await.is_some() {
-        let list = TORRENTS.read().await;
-        // Find the torrent we just added (last one with matching hash)
-        for m in list.iter().rev() {
-            let mut t = m.lock().await;
-            if t.info_hash_urlencoded == info_hash {
-                announce(&mut t, Some(Event::Started)).await;
-                info!(
-                    "Added and announced torrent: {} (interval: {}s)",
-                    name, t.interval
-                );
-                break;
-            }
-        }
+        let mut t = arc.lock().await;
+        announce(&mut t, Some(Event::Started)).await;
+        info!(
+            "Added and announced torrent: {} (interval: {}s)",
+            name, t.interval
+        );
     }
 }
 
 async fn handle_file_removed(path: PathBuf) {
     info!("Torrent file removed: {}", path.display());
 
-    // Find and remove the torrent
+    // Snapshot all entries before any async operation so we never hold a
+    // DashMap shard lock across an await point.
+    let entries: Vec<([u8; 20], Arc<Mutex<Torrent>>)> = TORRENTS
+        .iter()
+        .map(|e| (*e.key(), Arc::clone(e.value())))
+        .collect();
+
+    let mut found_key: Option<[u8; 20]> = None;
     let mut removed_info: Option<(String, u64, u16, u16, u16)> = None;
-    let mut removed_hash: Option<String> = None;
 
-    {
-        let list = TORRENTS.read().await;
-        for m in list.iter() {
-            let t = m.lock().await;
-            // First try to match by source path (most reliable)
-            let matches = if let Some(ref source) = t.source_path {
-                source == &path
-            } else {
-                // Fallback: match by filename stem vs torrent name
-                path.file_stem().is_some_and(|stem| {
-                    let filename = stem.to_string_lossy();
-                    t.name == filename.as_ref() || t.name.starts_with(filename.as_ref())
-                })
-            };
-
-            if matches {
-                removed_hash = Some(t.info_hash_urlencoded.clone());
-                removed_info = Some((
-                    t.name.clone(),
-                    t.uploaded,
-                    t.seeders,
-                    t.leechers,
-                    t.error_count,
-                ));
-                break;
-            }
+    for (key, arc) in &entries {
+        let t = arc.lock().await;
+        let matches = if let Some(ref source) = t.source_path {
+            source == &path
+        } else {
+            path.file_stem().is_some_and(|stem| {
+                let filename = stem.to_string_lossy();
+                t.name == filename.as_ref() || t.name.starts_with(filename.as_ref())
+            })
+        };
+        if matches {
+            found_key = Some(*key);
+            removed_info = Some((
+                t.name.clone(),
+                t.uploaded,
+                t.seeders,
+                t.leechers,
+                t.error_count,
+            ));
+            break;
         }
     }
 
-    if let Some(hash) = removed_hash {
-        // Announce STOPPED before removing
-        if CLIENT.read().await.is_some() {
-            let list = TORRENTS.read().await;
-            for m in list.iter() {
-                let mut t = m.lock().await;
-                if t.info_hash_urlencoded == hash {
-                    announce(&mut t, Some(Event::Stopped)).await;
-                    break;
-                }
-            }
-        }
-
-        // Remove from list
+    if let Some(hash) = found_key {
+        if CLIENT.read().await.is_some()
+            && let Some((_, arc)) = entries.iter().find(|(k, _)| k == &hash)
         {
-            let mut list = TORRENTS.write().await;
-            list.retain(|m| match m.try_lock() {
-                Ok(t) => t.info_hash_urlencoded != hash,
-                Err(_) => {
-                    // Unreachable: no path locks a torrent without holding TORRENTS read lock first,
-                    // so under the write lock here no torrent mutex can be held by another task.
-                    error!("torrent mutex held under TORRENTS write lock — this is a bug; removing torrent anyway");
-                    false
-                }
-            });
+            let mut t = arc.lock().await;
+            announce(&mut t, Some(Event::Stopped)).await;
         }
 
-        // Print stats
+        TORRENTS.remove(&hash);
+
         if let Some((name, uploaded, seeders, leechers, errors)) = removed_info {
             info!(
                 "Removed torrent \"{}\": uploaded={}, seeders={}, leechers={}, errors={}",
