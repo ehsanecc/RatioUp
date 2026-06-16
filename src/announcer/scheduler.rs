@@ -33,7 +33,7 @@ pub async fn run(wait_time: u64) {
                         super::tracker::announce(&mut t, None).await;
                     }
                     let elapsed = t.last_announce.elapsed().as_secs();
-                    let time_until_announce = t.interval.saturating_sub(elapsed);
+                    let time_until_announce = t.effective_interval().saturating_sub(elapsed);
                     min_interval = u64::min(min_interval, time_until_announce);
                 }
             }

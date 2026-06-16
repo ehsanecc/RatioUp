@@ -95,9 +95,15 @@ pub struct Torrent {
 }
 
 impl Torrent {
+    /// Effective announce interval: the stricter of `interval` and `min_interval`.
+    /// Per BEP 3, clients must not re-announce more frequently than `min_interval`.
+    pub fn effective_interval(&self) -> u64 {
+        self.interval.max(self.min_interval.unwrap_or(0))
+    }
+
     /// Tells if we can announce to tracker(s) depending on the last announce
     pub fn should_announce(&self) -> bool {
-        self.last_announce.elapsed().as_secs() >= self.interval
+        self.last_announce.elapsed().as_secs() >= self.effective_interval()
     }
 
     /// Tells if we can upload (need leechers)
@@ -420,6 +426,77 @@ mod tests {
             tracker_id: None,
             source_path: None,
         }
+    }
+
+    fn make_torrent_with_interval(interval: u64, min_interval: Option<u64>) -> Torrent {
+        let mut t = make_torrent(
+            [0u8; 20],
+            vec![String::from("http://t.example.com/announce")],
+        );
+        t.interval = interval;
+        t.min_interval = min_interval;
+        t
+    }
+
+    // --- effective_interval ---
+
+    #[test]
+    fn test_effective_interval_no_min() {
+        let t = make_torrent_with_interval(1800, None);
+        assert_eq!(t.effective_interval(), 1800);
+    }
+
+    #[test]
+    fn test_effective_interval_min_less_than_interval() {
+        // interval is the bottleneck — min_interval is irrelevant
+        let t = make_torrent_with_interval(1800, Some(900));
+        assert_eq!(t.effective_interval(), 1800);
+    }
+
+    #[test]
+    fn test_effective_interval_min_greater_than_interval() {
+        // min_interval overrides — tracker says "don't come back sooner than this"
+        let t = make_torrent_with_interval(900, Some(1800));
+        assert_eq!(t.effective_interval(), 1800);
+    }
+
+    #[test]
+    fn test_effective_interval_min_equals_interval() {
+        let t = make_torrent_with_interval(1800, Some(1800));
+        assert_eq!(t.effective_interval(), 1800);
+    }
+
+    #[test]
+    fn test_effective_interval_min_zero() {
+        // min_interval=0 should not reduce below interval
+        let t = make_torrent_with_interval(1800, Some(0));
+        assert_eq!(t.effective_interval(), 1800);
+    }
+
+    // --- should_announce with min_interval ---
+
+    #[test]
+    fn test_should_announce_blocked_by_min_interval() {
+        // interval=0 would normally fire immediately, but min_interval=1800 blocks it
+        let t = make_torrent_with_interval(0, Some(1800));
+        assert!(
+            !t.should_announce(),
+            "min_interval must block a zero interval"
+        );
+    }
+
+    #[test]
+    fn test_should_announce_zero_interval_no_min() {
+        // interval=0, no min_interval → effective=0, elapsed≥0 is always true
+        let t = make_torrent_with_interval(0, None);
+        assert!(t.should_announce());
+    }
+
+    #[test]
+    fn test_should_announce_lenient_min_interval() {
+        // min_interval < interval → interval is still the bottleneck, fresh torrent must wait
+        let t = make_torrent_with_interval(1800, Some(900));
+        assert!(!t.should_announce());
     }
 
     #[test]
