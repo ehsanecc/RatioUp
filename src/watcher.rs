@@ -215,12 +215,13 @@ async fn handle_file_removed(path: PathBuf) {
         // Remove from list
         {
             let mut list = TORRENTS.write().await;
-            list.retain(|m| {
-                // We need to check without async, so we use try_lock
-                if let Ok(t) = m.try_lock() {
-                    t.info_hash_urlencoded != hash
-                } else {
-                    true // Keep if we can't lock (shouldn't happen)
+            list.retain(|m| match m.try_lock() {
+                Ok(t) => t.info_hash_urlencoded != hash,
+                Err(_) => {
+                    // Unreachable: no path locks a torrent without holding TORRENTS read lock first,
+                    // so under the write lock here no torrent mutex can be held by another task.
+                    error!("torrent mutex held under TORRENTS write lock — this is a bug; removing torrent anyway");
+                    false
                 }
             });
         }

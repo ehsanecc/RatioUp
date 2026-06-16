@@ -224,7 +224,7 @@ async fn announce_http(
         .expect("HTTP client not initialized");
 
     let (_, headers_to_set) = client.get_query();
-    let built_url = build_url(url, torrent, event, client.key.clone().to_string()).await;
+    let built_url = build_url(url, torrent, event, client);
     info!("Announce HTTP URL {built_url}");
 
     let mut request_builder = reqwest_client.get(&built_url);
@@ -345,11 +345,11 @@ async fn announce_http(
 
 /// Build the HTTP announce URLs for the listed trackers in the torrent file.
 /// It prepares the announce query by replacing variables (port, numwant, ...) with the computed values
-pub async fn build_url(
+pub fn build_url(
     url: &str,
     torrent: &mut Torrent,
     event: Option<Event>,
-    key: String,
+    client: &Client,
 ) -> String {
     info!("Torrent {:?}: {}", event, torrent.name);
     //compute downloads and uploads
@@ -360,8 +360,6 @@ pub async fn build_url(
     };
     let uploaded: u64 = torrent.next_upload_speed as u64 * elapsed;
 
-    //build URL list
-    let client = (*CLIENT.read().await).clone().unwrap();
     let mut port = 55555u16;
     let mut numwant = 80u16;
     if let Some(config) = CONFIG.get() {
@@ -375,7 +373,7 @@ pub async fn build_url(
     result.push_str(&client.query);
     let result = result
         .replace("{infohash}", &torrent.info_hash_urlencoded)
-        .replace("{key}", &key)
+        .replace("{key}", &client.key.to_string())
         .replace("{uploaded}", uploaded.to_string().as_str())
         .replace("{downloaded}", "0")
         .replace("{peerid}", &client.peer_id)
