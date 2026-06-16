@@ -1,4 +1,12 @@
-name: Rust CI
+# Forgejo Actions CI — runs on push and pull_request events.
+# Mirrors the Woodpecker CI pipeline (.woodpecker.yml) for teams that prefer
+# Forgejo Actions over Woodpecker.  Both delegate to the justfile.
+#
+# LOCAL DEVELOPMENT (NixOS, no docker needed):
+#   nix develop        # enter the dev shell (all tools available)
+#   just ci-all        # run the full pipeline
+
+name: CI
 
 on:
   push:
@@ -8,43 +16,65 @@ on:
     branches:
       - master
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  test:
-    runs-on: ubuntu-latest # Or 'macos-latest', 'windows-latest' if you need other OS
-    container:
-      image: rust:slim # Using the slim Rust image as specified in Woodpecker
-
+  lint:
+    runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4 # Action to checkout your repository code
+      - uses: actions/checkout@v4
 
-    - name: Set environment variables
-      run: |
-        echo "CARGO_TERM_COLOR=always" >> $GITHUB_ENV
-        echo "RUSTFLAGS=-Cinstrument-coverage" >> $GITHUB_ENV
-        echo "LLVM_PROFILE_FILE=RatioUp-%p-%m.profraw" >> $GITHUB_ENV
-      # Note: For RUSTFLAGS and LLVM_PROFILE_FILE, if you are planning to
-      # collect and process coverage reports, you'll need additional steps
-      # (e.g., using `grcov` or `llvm-profdata`/`llvm-cov`).
-      # This setup just enables the instrumentation.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
-    - name: Install stable Rust
-      run: rustup default stable # The container should already have stable, but good for explicit safety
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Add rustfmt component
-      run: rustup component add rustfmt
+      - run: cargo fmt -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
 
-    - name: Run rustfmt check
-      run: cargo fmt -- --check
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-    - name: Add clippy component
-      run: rustup component add clippy
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
 
-    - name: Run clippy
-      run: cargo clippy -- -D warnings # Add -D warnings to treat lints as errors
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Add llvm-tools-preview component
-      run: rustup component add llvm-tools-preview
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest --locked
 
-    - name: Run tests
-      run: cargo test
+      - run: cargo nextest run
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install security tools
+        run: |
+          cargo install cargo-audit --locked
+          cargo install cargo-machete --locked
+          cargo install cargo-deny --locked
+
+      - run: cargo audit
+      - run: cargo machete
+      - run: cargo deny check
