@@ -369,7 +369,6 @@ impl Torrent {
     }
 }
 
-// TODO: test tracker response "with d8:completei0e10:downloadedi0e10:incompletei1e8:intervali1922e12:min intervali961e5:peers6:<3A><><EFBFBD>m<EFBFBD><6D>e"
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -605,5 +604,119 @@ mod tests {
         assert!((16..=64).contains(&speed));
         let speed = t.uploaded(16, 64);
         assert!((16..=64).contains(&speed));
+    }
+
+    // --- from_bencode_bytes (real fixtures) ---
+
+    #[test]
+    fn test_parse_ubuntu_torrent() {
+        let data = include_bytes!("../tests/ubuntu-20.04.4-desktop-amd64.iso.torrent");
+        let t = Torrent::from_bencode_bytes(data).unwrap();
+        assert!(!t.name.is_empty());
+        assert!(t.length > 0);
+        assert!(!t.urls.is_empty());
+        assert_eq!(t.info_hash.len(), 20);
+        assert!(!t.info_hash_urlencoded.is_empty());
+    }
+
+    #[test]
+    fn test_parse_audio_archive_torrent() {
+        let data = include_bytes!("../tests/Audio_20160422_archive.torrent");
+        let t = Torrent::from_bencode_bytes(data).unwrap();
+        assert!(!t.name.is_empty());
+        assert!(t.length > 0);
+        assert!(!t.urls.is_empty());
+    }
+
+    // --- from_bencode_bytes error paths ---
+
+    #[test]
+    fn test_from_bencode_top_level_not_dict() {
+        let result = Torrent::from_bencode_bytes(b"i42e");
+        assert!(matches!(result, Err(TorrentError::InvalidFieldType(_))));
+    }
+
+    #[test]
+    fn test_from_bencode_no_valid_urls() {
+        // ftp:// is unsupported → urls stays empty → MissingField
+        let data = b"d8:announce25:ftp://tracker.example.come";
+        let result = Torrent::from_bencode_bytes(data);
+        assert!(matches!(result, Err(TorrentError::MissingField(_))));
+    }
+
+    #[test]
+    fn test_from_bencode_missing_info() {
+        // Has a valid announce URL but no "info" key
+        let data = b"d8:announce27:http://tracker.example.com/e";
+        let result = Torrent::from_bencode_bytes(data);
+        assert!(matches!(result, Err(TorrentError::MissingField(_))));
+    }
+
+    #[test]
+    fn test_from_bencode_missing_name() {
+        // info dict has length but no name
+        let data = b"d8:announce27:http://tracker.example.com/4:infod6:lengthi1000eee";
+        let result = Torrent::from_bencode_bytes(data);
+        assert!(matches!(result, Err(TorrentError::MissingField(_))));
+    }
+
+    #[test]
+    fn test_from_bencode_negative_length() {
+        let data = b"d8:announce27:http://tracker.example.com/4:infod4:name4:test6:lengthi-1eee";
+        let result = Torrent::from_bencode_bytes(data);
+        assert!(matches!(result, Err(TorrentError::ParseError(_))));
+    }
+
+    // --- from_file ---
+
+    #[test]
+    fn test_from_file_nonexistent() {
+        let result = Torrent::from_file(std::path::PathBuf::from("/nonexistent/path.torrent"));
+        assert!(matches!(result, Err(TorrentError::IoError(_))));
+    }
+
+    #[test]
+    fn test_from_file_sets_source_path() {
+        let path = std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/ubuntu-20.04.4-desktop-amd64.iso.torrent"
+        ));
+        let t = Torrent::from_file(path.clone()).unwrap();
+        assert_eq!(t.source_path, Some(path));
+    }
+
+    // --- TorrentError Display ---
+
+    #[test]
+    fn test_torrent_error_display() {
+        assert!(
+            TorrentError::MissingField("foo")
+                .to_string()
+                .contains("foo")
+        );
+        assert!(
+            TorrentError::InvalidFieldType("bar")
+                .to_string()
+                .contains("bar")
+        );
+        assert!(
+            TorrentError::ParseError("oops".to_string())
+                .to_string()
+                .contains("oops")
+        );
+        assert!(
+            TorrentError::Utf8ConversionError("field")
+                .to_string()
+                .contains("field")
+        );
+        let io_err = std::io::Error::other("disk fail");
+        assert!(
+            TorrentError::IoError(io_err)
+                .to_string()
+                .contains("disk fail")
+        );
+        let bencode_err =
+            TorrentError::BencodeError(crate::bencode::BencodeDecoderError::UnexpectedEndOfInput);
+        assert!(!bencode_err.to_string().is_empty());
     }
 }
